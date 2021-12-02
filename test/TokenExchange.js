@@ -28,16 +28,6 @@ describe("TokenExchange contract", function () {
         await tokenB.deployed();
         tokenExchange = await TokenExchange.deploy(tokenA.address, tokenB.address, 100);
         await tokenExchange.deployed();
-
-        //OWNER mints tokens and approves them to exchange contract
-        await tokenA.mint(owner.address, 1000000);
-        await tokenA.approve(tokenExchange.address, 100000);
-        await tokenB.mint(owner.address, 1000000);
-        await tokenB.approve(tokenExchange.address, 100000);
-
-        //USER gets tokens and approves them to exchange contract
-        await tokenA.transfer(addr1.address, 1000);
-        await tokenA.connect(addr1).approve(tokenExchange.address, 1000);
     });
 
     describe("constructor", function () {
@@ -64,6 +54,14 @@ describe("TokenExchange contract", function () {
     });
 
     describe("deposit", function () {
+        beforeEach(async function () {
+            //owner mints tokens to himself and approves them to the exchange contract so he can deposit
+            await tokenA.mint(owner.address, 1000000);
+            await tokenA.approve(tokenExchange.address, 100000);
+            await tokenB.mint(owner.address, 1000000);
+            await tokenB.approve(tokenExchange.address, 100000);
+        });
+
         it("Should deposit expected amount of tokens when owner calls providing correct address", async function () {
             await tokenExchange.deposit(tokenB.address, 100000);
             expect(await tokenB.balanceOf(tokenExchange.address)).to.equal(100000);
@@ -80,7 +78,71 @@ describe("TokenExchange contract", function () {
                 tokenExchange.connect(addr1).deposit(tokenB.address, 1000)
             ).to.be.revertedWith("Ownable: caller is not the owner");
         });
-
     });
 
+    describe("exchange", function () {
+        beforeEach(async function () {
+            //owner mints tokens to himself and approves them to the exchange contract so he can deposit
+            await tokenA.mint(owner.address, 1000000);
+            await tokenA.approve(tokenExchange.address, 100000);
+            await tokenB.mint(owner.address, 1000000);
+            await tokenB.approve(tokenExchange.address, 100000);
+
+            await tokenExchange.deposit(tokenA.address, 100000);
+            await tokenExchange.deposit(tokenB.address, 100000);
+
+            //owner sends tokens to user
+            await tokenA.transfer(addr1.address, 1000);
+            await tokenB.transfer(addr1.address, 10);
+            //user approves tokens to the exchange contract so he can exchange
+            await tokenA.connect(addr1).approve(tokenExchange.address, 1000);
+            await tokenB.connect(addr1).approve(tokenExchange.address, 10);
+        });
+
+        //user calls with 950 tokenA, is charged 900 tokenA, gets back 9 tokenB
+        it("Should take and send back expected amount of tokens (tokenA)", async function () {
+            const ABalance = await tokenA.balanceOf(addr1.address);
+            const BBalance = await tokenB.balanceOf(addr1.address);
+
+            const AExpectedBalance = +ABalance - 900;
+            const BExpectedBalance = +BBalance + 9;
+
+            await tokenExchange.connect(addr1).exchange(tokenA.address, 950);
+
+            expect(await tokenA.balanceOf(addr1.address)).to.equal(AExpectedBalance);
+            expect(await tokenB.balanceOf(addr1.address)).to.equal(BExpectedBalance);
+        });
+
+        //user calls with 9 tokenB, is charged 9 tokenB, gets back 900 tokenA
+        it("Should take and send back expected amount of tokens (tokenB)", async function () {
+            const BBalance = await tokenB.balanceOf(addr1.address);
+            const ABalance = await tokenA.balanceOf(addr1.address);
+
+            const BExpectedBalance = +BBalance - 9;
+            const AExpectedBalance = +ABalance + 900;
+
+            await tokenExchange.connect(addr1).exchange(tokenB.address, 9);
+
+            expect(await tokenB.balanceOf(addr1.address)).to.equal(BExpectedBalance);
+            expect(await tokenA.balanceOf(addr1.address)).to.equal(AExpectedBalance);
+        });
+
+        it("Should fail if contract does not have enough tokens to send back", async function () {
+            await expect(
+                tokenExchange.exchange(tokenB.address, 2000)
+            ).to.be.revertedWith("TokenExchange: Insufficient contract balance");
+        });
+
+        it("Should fail if called provided wrong address", async function () {
+            await expect(
+                tokenExchange.exchange(addr1.address, 1000)
+            ).to.be.revertedWith("TokenExchange: Wrong token address");
+        });
+
+        it("Should fail if called provided zero amount", async function () {
+            await expect(
+                tokenExchange.exchange(tokenA.address, 0)
+            ).to.be.revertedWith("TokenExchange: Amount must be greater than zero");
+        });
+    });
 });
